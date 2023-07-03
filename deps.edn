@@ -1,0 +1,4 @@
+{:paths   ["src"]
+ :deps    {github-akovantsev/blet
+           {:git/url "https://github.com/akovantsev/blet"
+            :git/sha "7f6c48973565f14560870539a379e8e618962f82"}}}
