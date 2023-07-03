@@ -7,5 +7,5 @@ Inefficient but legible and colorful pretty-print
 ;; in deps.edn
 {:deps {github-akovantsev/pp
         {:git/url "https://github.com/akovantsev/pp"
-         :git/sha ""}}}
+         :git/sha "1357db37ce27419441696c6701ae27f163e665ea"}}}
 ```
