@@ -10,6 +10,7 @@
 (def ^:dynamic *limit-seq-elements* 20)
 (def ^:dynamic *max-line-chars* 50)
 (def ^:dynamic *max-key-chars* 30)
+(def ^:dynamic *sort-keys-by-val-height* true)
 
 (def LEFT (symbol "➡︎"))
 (def DOWN (symbol "⬇︎"))
@@ -86,12 +87,18 @@
   (let [s1 (peek k1), s2 (peek k2)]
     (compare [(max 10 (count v1)) (count s1) s1] [(max 10 (count v2)) (count s2) s2])))
 
+(defn -az [[k1 v1] [k2 v2]]
+  (compare (peek k1) (peek k2)))
+
 
 (defn -pmap [x]
   (let [kss    (binding [*max-line-chars* *max-key-chars*]
                  (->> x keys (map -pps)))
         vss    (->> x vals (map -pps))
-        kvss   (->> (interleave kss vss) (partition 2) (sort -height-short-first-az))
+        kvsf   (if *sort-keys-by-val-height*
+                 -height-short-first-az
+                 -az)
+        kvss   (->> (interleave kss vss) (partition 2) (sort kvsf))
         maxk   (->> kss (map last) (map -str-count) (reduce max 0))
         padlen (inc maxk)
         pad    (str/join (repeat padlen " "))]
