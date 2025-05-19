@@ -1,6 +1,8 @@
 (ns akovantsev.pp
+  #?(:cljs (:require-macros [akovantsev.pp :refer [$ locals data-reader-basecase-macro]]))
   (:require
    [clojure.string :as str]
+   [clojure.walk :as walk]
    [com.akovantsev.blet.core :refer [blet blet!]]))
 
 
@@ -87,23 +89,28 @@
 
 
 (defn -stitch-row [els]
-  (->> els
-    (reduce
-      (fn rf1 [[llen left] right]
-        (let [prev- (pop left)
-              gap   " "
-              pref  (str (peek left) gap)
-              [rlen right*] (-wrap (inc llen) pref "" right)]
-          [rlen (into prev- right*)])))))
+  (if (empty? els)
+    [0 [""]]
+    (->> els
+      (reduce
+        (fn rf1 [[llen left] right]
+          (let [prev- (pop left)
+                gap   " "
+                pref  (str (peek left) gap)
+                [rlen right*] (-wrap (inc llen) pref "" right)]
+            [rlen (into prev- right*)]))))))
 
 (defn -stitch-col [els]
-  (->> els
-    (reduce
-      (fn rf1 [[tlen top] [blen bot]]
-        [blen (into top bot)]))))
+  (if (empty? els)
+    [0 [""]]
+    (->> els
+      (reduce
+        (fn rf1 [[tlen top] [blen bot]]
+          [blen (into top bot)])))))
 
 (comment
   (-stitch-row [[6 ["lellel"]] [6 ["kekkek"]] [5 [":goof"]] [1 ["1"]] [4 ["true"]]])
+  (-stitch-col [])
   (-stitch-col [[4 ["abc" "defg"]]
                 [4 ["abc" "defg"]]]))
 
@@ -238,32 +245,303 @@
 
 
 
+(def ^:dynamic *quoted?* false)
 
 (defn -pset [x] (-wrap 2 "#{" "}" (-pack (-> x meta ::ncols) (->> x (mapv -pps) sort-vs (-limited MOREV) vec))))
-(defn -pseq [x] (-wrap 2 "'(" ")" (-pack (-> x meta ::ncols) (->> x (-limited MORE) (mapv -pps)))))
+(defn -pseq [x] (binding [*quoted?* true]
+                  (-wrap 2 "'(" ")" (-pack (-> x meta ::ncols) (->> x (-limited MORE) (mapv -pps))))))
 (defn -pvec [x] (-wrap 1 "["  "]" (-pack (-> x meta ::ncols) (->> x (-limited MORE) (mapv -pps)))))
 (defn -pcal [x] (-wrap 1 "("  ")" (-pack (-> x meta ::ncols) (->> x (mapv -pps)))))
 (defn -pmap [x] (-wrap 1 "{"  "}" (-pack 2 (->> x (mapv #(mapv -pps %)) sort-kvs (-limited MOREKV) (reduce into [])))))
+(defn -pmet [x] (-wrap 1 "^"  "" (-pps (with-meta x (-> x meta (dissoc ::meta?))))))
 
 (defn -pps  [x]
   (let [c? (-> x meta ::call?)
+        m? (-> x meta ::meta?)
         f  (cond
+             m?          -pmet
              c?          -pcal
              (map? x)    -pmap
              (vector? x) -pvec
              (set? x)    -pset
-             (list? x)   -pseq
-             (seq? x)    -pseq
+             (list? x)   (if *quoted?* -pcal -pseq)
+             (seq? x)    (if *quoted?* -pcal -pseq)
              :else       -pscalar)]
     (f x)))
 
 (defn string [x] (str/join "\n" (second (-pps x))))
 
 
+
+;; SPY
+;; cljs wip, sorry:
+
+
+(def ^:dynamic *log-fn* tap>)
+
+#?(:clj
+   (defmacro locals [& banned]
+     (let [ks (->> &env keys
+                ;(remove #{'_})
+                (remove #(re-matches #".+__\d+(?:__auto__)?" (name %)))
+                (remove (set banned)))]
+       (zipmap (map #(list 'quote %) ks) ks))))
+
+
+(def -result-sym (gensym "result"))
+
+(defn -hide [form]
+  (cond
+    ;; unwrapping (let [res orig] (spy res)):
+    (and (-> form seq?)
+      (-> form second vector?)
+      (-> form second first (= -result-sym)))
+    (-> form second second)
+
+    ;; unwrapping ($ x):
+    (and (-> form seq?)
+      (-> form first (= '$)))
+    (-> form second)
+
+    ;; removing (-> x $ inc $):
+    (-> form seq?)
+    (remove #{'$} form)
+
+    :else
+    form))
+
+
+(defn -spy [label meta form evaled]
+  ;(->> (Thread/currentThread) (.getStackTrace) (map #(-where nil %)) (pp/spy))
+  (*log-fn*
+    #?(:cljs
+       {::label  label
+        ::meta   (-> meta (dissoc :line :column) not-empty)
+        ::form   form
+        ::evaled evaled}
+
+       :clj
+       (let [el ^StackTraceElement
+                (->> (Thread/currentThread) (.getStackTrace) (drop 4) first)]
+         ;(println *log-fn*)
+         {::line   (or (:line meta) (.getLineNumber el))
+          ::class  (.getClassName el)
+          ::file   (.getFileName el)
+          ::label  label
+          ::meta   (-> meta (dissoc :line :column) not-empty)
+          ::form   form
+          ::evaled evaled})))
+  evaled)
+
+
+
+(def ^:dynamic *db* nil) ;;(atom [])
+(defn -store! [m] (swap! *db* conj m))
+
+
+
+
+(declare data-reader-multi)
+
+(defn data-reader-basecase [label orig-form]
+  (let [clean (walk/postwalk -hide orig-form)
+        ometa (meta orig-form)]
+    ;(pp/spy (locals))
+    (with-meta
+      `(let [~-result-sym ~orig-form]
+         (-spy ~label '~ometa '~clean ~-result-sym))
+      (meta orig-form))))
+
+(defn spy-data-reader
+  ([orig-form] (spy-data-reader nil orig-form))
+  ([label orig-form]
+   (if (seq? orig-form)
+     (data-reader-multi label orig-form)
+     (data-reader-basecase label orig-form))))
+
+
+#?(:clj
+   (defmacro data-reader-basecase-macro [label orig-form]
+     (data-reader-basecase label orig-form)))
+
+
+#?(:clj
+   (defmacro $
+     ([form]
+      (spy-data-reader nil form))
+     ([label form]
+      (spy-data-reader label form))
+     ([a b c]
+      (cond
+        (= '- a) (spy-data-reader b c)  ;; (->> form ($ - label ,))
+        (= '- b) (spy-data-reader c a)  ;; (->  form ($ , - label))
+        :else    (throw (new Error "(f - label form) or (f form - label) expected"))))))
+
+
+;; todo skip forms with :- meta
+;; fixme: pass and use prefix: concat with op
+
+
+(defn -data-reader-like-cond [form]
+  (let [[op & pairs] form
+        pairs+   (->> pairs
+                   (partition-all 2)
+                   (mapcat (fn [[pred then]]
+                             [(data-reader-basecase ''<cond-pred> pred)
+                              (data-reader-basecase ''<cond-then> then)])))]
+    (with-meta
+      `(~op ~@pairs+)
+      (meta form))))
+
+
+(defn -data-reader-like-if [form]
+  (let [[op pred then else] form]
+    (with-meta
+      `(~op
+        ~(data-reader-basecase ''<if-pred> pred)
+        ~(data-reader-basecase ''<if-then> then)
+        ~(data-reader-basecase ''<if-else> else))
+      (meta form))))
+
+
+
+(defn -data-reader-like-when [form]
+  (let [[op pred & then] form]
+    (with-meta
+      `(~op
+        ~(data-reader-basecase ''<when-pred> pred)
+        ~(data-reader-basecase ''<when-then> (cons 'do then)))
+      (meta form))))
+
+(defn -data-reader-like-case [form]
+  (let [[op expr & branches] form
+        pairs    (->> branches
+                   (partition 2)
+                   (mapcat (fn [[pred then]]
+                             [pred (data-reader-basecase ''<case-then> then)])))
+        defaults (when (-> branches count odd?)
+                   [(data-reader-basecase ''<case-default> (last branches))])]
+    (with-meta
+      `(~op
+        ~(data-reader-basecase ''<case> expr)
+        ~@pairs
+        ~@defaults)
+      (meta form))))
+
+
+
+(defn -get-destructure-fn []
+  (or (resolve 'cljs.core/destructure)
+      (resolve 'clojure.core/destructure)))
+
+;; pp_test.js:6
+;; WARNING: Use of undeclared Var akovantsev.pp/Throwable
+
+(defn -data-reader-like-let [form]
+  (let [[op pairs & bodies] form
+        js?    (resolve 'cljs.core/destructure)
+        pairs* (->> pairs
+                 ((-get-destructure-fn))
+                 (partition-all 2)
+                 (mapcat (fn [[sym expr]] [sym (data-reader-basecase `'~sym expr)]))
+                 vec)]
+    (with-meta
+      `(let [stash# *log-fn*]
+         (binding [*db*      (or *db* (atom []))
+                   *log-fn*  -store!]
+           ;(-data-reader-basecase-macro (symbol "<locals>") (locals))
+           (try
+             (~op
+              ~pairs*
+              (stash# @*db*)
+              (reset! *db* [])
+              (binding [*db*     nil
+                        *log-fn* stash#]
+                ~@bodies))
+             (catch ~(if js? `js/Error `Throwable) e#
+               (data-reader-basecase-macro (symbol "Throwable") e#)
+               (stash# @*db*)
+               (throw e#)))))
+      (meta form))))
+
+
+(defmulti  data-reader-multi      (fn [label seqform] (first seqform)))
+(defmethod data-reader-multi :default [label form] (data-reader-basecase label form))
+(defmethod data-reader-multi      'if [label form] (-data-reader-like-if form))
+(defmethod data-reader-multi    'when [label form] (-data-reader-like-when form))
+(defmethod data-reader-multi    'case [label form] (-data-reader-like-case form))
+(defmethod data-reader-multi    'cond [label form] (-data-reader-like-cond form))
+(defmethod data-reader-multi     'let [label form] (-data-reader-like-let form))
+
+
+
+
+;; todo nospy #- to exclude huge vals from locals
+;; todo make all form spies collect data like lets! until exception or return
+;;fixme dedup 2 nested #$: #$ #$ -> #$
+
+
+
+
+
+(def -LOCK #?(:clj (Object.) :cljs nil))
+
+
+;; dont forget to wrap in bindings:
+(defn tap-prn [x]
+  (locking -LOCK
+    (cond
+      (and (vector? x) (-> x first map?) (-> x first (contains? ::evaled)))
+      (do
+        (let [{:keys [::line ::class ::file ::label ::meta ::form ::evaled]} (first x)]
+          (println
+            (str
+              "\n"
+              (when class (str ";; " file ":" line " " class "\n"))
+              (->> x
+                (mapcat (juxt
+                          (juxt ::label ::form)
+                          (juxt ::label ::evaled)))
+                (reduce into ^{::ncols 2} [])
+                ;(into {})
+                string)))))
+
+
+      (and (map? x) (contains? x ::evaled))
+      (let [{:keys [::line ::class ::file ::label ::meta ::form ::evaled]} x]
+        (println
+          (str
+            "\n"
+            (when class (str ";; " file ":" line " " class " " label "\n"))
+            ;(when label (str ";; " (pr-str label) "\n"))
+            ;(when meta  (str ";; ^" (pr-str meta) "\n"))
+            (when form  (str "#_" (pr-str form) "\n"))
+            (when meta (str (string (with-meta meta {::meta? true})) "\n"))
+            (string evaled))))
+
+      :else
+      (println
+        (str "\n" (string x))))))
+
+
+
 (comment
-  (defn- $ [x] (println (pr-str x)) x)
-  (defn spy [x] (println (string x)) x)
+  (add-tap #'tap-prn)
+  (remove-tap #'tap-prn))
+
+
+(comment
+  ;; https://stackoverflow.com/a/77460102
+  (defmethod clojure.core/print-method ::as-map [o, ^java.io.Writer w]
+    (#'clojure.core/print-meta o w)
+    (#'clojure.core/print-sequential "{" #'clojure.core/pr-on " " "}" o w))
+
+  (pr-str ^{:type ::as-map} [1 2 3]))  ;; => "{1 2 3}"
+
+
+(comment
   (binding [*sort* ::sort-az
+            *log-fn* tap-prn
             *max-el-chars-len* 44
             *limit-seq-elements* 32
             *col-overflow-tolerance-chars-len* 15]
@@ -281,7 +559,7 @@
       (->
         ;(repeatedly 100 random)
         ;(with-meta {::ncols 3})
-        {3 4 (keyword "lel kek") 6 (range) (with-meta (range) {::ncols 5})
+        {3 4 (keyword "lel kek") ($ 6) (range) (with-meta (range) {::ncols 5})
          [12312312312 123 213 123 1231231 312 123 123 123 123
           [12312312312 123 213 123 1231231 312 123 123 123 123]]
          [12312312312 123 213 123 1231231 312 123 123 123 123 112312312 123 213 123 129331231 312 123 123 123 123]
@@ -289,6 +567,6 @@
          1 2
          (into #{} [0 12312312312 123 211233 123 12312456 45647 5786 7907 31 312 123 123 123 123 12312312312 123 213 786789789 123 1231231 312 123 123 123 123]) ::kek
          (range 10 100) (range)}
-        spy
+        $
         (do nil)))))
 

@@ -1,0 +1,1 @@
+{for-akovantsev-pp-test akovantsev.pp/spy-data-reader}
