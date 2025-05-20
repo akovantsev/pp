@@ -9,7 +9,7 @@
 (def ^:dynamic *colored* true)
 (def ^:dynamic *max-el-chars-len* 44) ;;uuid len
 (def ^:dynamic *col-overflow-tolerance-chars-len* 15)
-(def ^:dynamic *limit-seq-elements* 32)
+(def ^:dynamic *limit-seq-elements* 100)
 
 (def ^:dynamic *sort* nil)
 (def ^:dynamic *sort-vs* nil)
@@ -418,7 +418,7 @@
 #?(:clj
    (defmacro $
      ([form]
-      (spy-data-reader nil form))
+      (spy-data-reader ''pp/$ form))
      ([label form]
       (spy-data-reader label form))
      ([a b c]

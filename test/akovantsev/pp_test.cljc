@@ -9,8 +9,10 @@
           pp/*max-el-chars-len* 44
           pp/*limit-seq-elements* 32
           pp/*col-overflow-tolerance-chars-len* 15]
+  #$
   (let [randlen    #(+ 5 (rand-int 10))
         randword   #(->> "qwertyuioplkjhgfdsazxcvbnm" seq shuffle (take (randlen)) str/join)
+        kek        (->> 1 inc $ (- 2) $)
         randnum    #(rand-int 10000000)
         randkw     #(keyword (randword))
         randqkw    #(keyword (randword) (randword))
