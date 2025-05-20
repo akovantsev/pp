@@ -306,10 +306,10 @@
         (println
           (str
             "\n"
-            (when class (str ";; " file ":" line " " class " " label "\n"))
+            (when file (str ";; " file ":" line " " class " " label "\n"))
             ;(when label (str ";; " (pr-str label) "\n"))
             ;(when meta  (str ";; ^" (pr-str meta) "\n"))
-            (when form  (str "#_" (pr-str form) "\n"))
+            (when form  (str "#_ " (pr-str form) "\n"))
             (when meta (str (string (with-meta meta {::meta? true})) "\n"))
             (string evaled))))
 
@@ -361,8 +361,11 @@
   ;(->> (Thread/currentThread) (.getStackTrace) (map #(-where nil %)) (pp/spy))
   (*log-fn*
     #?(:cljs
-       {::label  label
-        ::meta   (-> meta (dissoc :line :column) not-empty)
+       {::line   (or (:end-line meta) (:line meta))
+        ::column (or (:end-column meta) (:column meta))
+        ::file   (-> meta :file)
+        ::label  label
+        ::meta   (-> meta (dissoc :file :line :column :end-line :end-column) not-empty)
         ::form   form
         ::evaled evaled}
 
@@ -371,10 +374,11 @@
                 (->> (Thread/currentThread) (.getStackTrace) (drop 4) first)]
          ;(println *log-fn*)
          {::line   (or (:line meta) (.getLineNumber el))
+          ::column (-> meta :column)
           ::class  (.getClassName el)
           ::file   (.getFileName el)
           ::label  label
-          ::meta   (-> meta (dissoc :line :column) not-empty)
+          ::meta   (-> meta (dissoc :file :line :column) not-empty)
           ::form   form
           ::evaled evaled})))
   evaled)
